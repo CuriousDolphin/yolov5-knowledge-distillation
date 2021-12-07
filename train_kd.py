@@ -5,9 +5,10 @@ Train a YOLOv5 model on a custom dataset
 Usage:
     $ python path/to/train.py --data coco128.yaml --weights yolov5s.pt --img 640
 """
+import os
 import argparse
 import math
-import os
+
 import random
 import sys
 import time
@@ -51,36 +52,11 @@ from utils.plots import plot_evolve, plot_labels
 from utils.torch_utils import EarlyStopping, ModelEMA, de_parallel, select_device, torch_distributed_zero_first
 
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
+#LOCAL_RANK = 0
 RANK = int(os.getenv('RANK', -1))
 WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
 
 
-
-class NetwithLoss(torch.nn.Module):
-    def __init__(self, teacher, student):
-        super().__init__()
-        self.B=1 
-        self.A=0.5
-        self.teacher = teacher
-        self.student = student
-        self.student.train()
-        self.compute_loss = ComputeLoss(self.student)
-        self.sl1 = nn.SmoothL1Loss()
-
-    @torch.cuda.amp.autocast()
-    def forward(self, imgs, targets):
-        predT = self.teacher(imgs)
-        predS = self.student(imgs)
-
-        hint_loss = self.sl1(pred[0], predT[1][0]) + \
-                    self.sl1(pred[1], predT[1][1]) + \
-                    self.sl1(pred[2], predT[1][2])
-
-        # STUDENT-Ground truth Loss
-        loss_s, loss_items = compute_loss(predS, targets.cuda(), self.student)  # scaled by batch_size
-        #loss_st, _ = compute_loss(predS, predT.cuda(), self.student)  # scaled by batch_size
-
-        return self.B*loss_s+hint_loss*self.A, loss_items
 
 def train(hyp,  # path/to/hyp.yaml or hyp dictionary
           opt,
@@ -125,6 +101,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
     # Config
     plots = not evolve  # create plots
     cuda = device.type != 'cpu'
+    print("========DEVICE",device)
     init_seeds(1 + RANK)
     with torch_distributed_zero_first(LOCAL_RANK):
         data_dict = data_dict or check_dataset(data)  # check if None
@@ -135,18 +112,9 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
     is_coco = isinstance(val_path, str) and val_path.endswith('coco/val2017.txt')  # COCO dataset
 
     
-    # TEACHER MODEL
-    with torch_distributed_zero_first(LOCAL_RANK):
-        t_weights = attempt_download("yolov5l.pt")
-    ckpt = torch.load(t_weights, map_location=device)
-    model_t = Model(cfg or ckpt['model'].yaml, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
-    exclude = ['anchor'] if (cfg or hyp.get('anchors')) and not resume else []  # exclude keys
-    csd = ckpt['model'].float().state_dict()  # checkpoint state_dict as FP32
-    csd = intersect_dicts(csd, model_t.state_dict(), exclude=exclude)  # intersect
-    model_t.load_state_dict(csd, strict=False)  # load
-    model_t.to(device)
-    LOGGER.info(f'[TEACHER] Transferred {len(csd)}/{len(model_t.state_dict())} items from {t_weights}')  # report
-
+    
+    torch.backends.cudnn.deterministic = False
+    torch.backends.cudnn.benchmark = True
     #STUDENT Model
     check_suffix(weights, '.pt')  # check weights
     pretrained = weights.endswith('.pt')
@@ -163,6 +131,22 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
     else:
         model = Model(cfg, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create # student
 
+
+    # TEACHER MODEL
+    with torch_distributed_zero_first(LOCAL_RANK):
+        t_weights = attempt_download("yolov5l.pt")
+    t_model = torch.load("yolov5l.pt", map_location=device)
+    #t_model = Model(cfg or ckpt['model'].yaml, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
+    # exclude = ['anchor'] if (cfg or hyp.get('anchors')) and not resume else []  # exclude keys
+    # csd = ckpt['model'].float().state_dict()  # checkpoint state_dict as FP32
+    # csd = intersect_dicts(csd, t_model.state_dict(), exclude=exclude)  # intersect
+    # t_model.load_state_dict(csd, strict=False)  # load
+    if t_model.get("model", None) is not None:
+            t_model = t_model["model"]
+    t_model.to(device)
+    t_model.float()
+    t_model.train()
+    LOGGER.info(f'[TEACHER] Transferred ')  # report
     
 
     # Freeze
@@ -242,7 +226,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
 
     # DP mode
     if cuda and RANK == -1 and torch.cuda.device_count() > 1:
-        LOGGER.warning('WARNING: DP not recommended, use torch.distributed.run for best DDP Multi-GPU results.\n'
+        LOGGER.warning('====WARNING: DP not recommended, use torch.distributed.run for best DDP Multi-GPU results.\n'
                        'See Multi-GPU Tutorial at https://github.com/ultralytics/yolov5/issues/475 to get started.')
         model = torch.nn.DataParallel(model)
 
@@ -326,10 +310,11 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
         # dataset.mosaic_border = [b - imgsz, -b]  # height, width borders
 
         mloss = torch.zeros(3, device=device)  # mean losses
+        mdloss = torch.zeros(1, device=device)
         if RANK != -1:
             train_loader.sampler.set_epoch(epoch)
         pbar = enumerate(train_loader)
-        LOGGER.info(('\n' + '%10s' * 7) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'labels', 'img_size'))
+        LOGGER.info(('\n' + '%10s' *8 ) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls','dist', 'labels', 'img_size'))
         if RANK in [-1, 0]:
             pbar = tqdm(pbar, total=nb, ncols=NCOLS, bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}')  # progress bar
         optimizer.zero_grad()
@@ -356,17 +341,24 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
                     ns = [math.ceil(x * sf / gs) * gs for x in imgs.shape[2:]]  # new shape (stretched to gs-multiple)
                     imgs = nn.functional.interpolate(imgs, size=ns, mode='bilinear', align_corners=False)
 
-            with torch.no_grad():
-                pred_t = model_t(imgs)
+            
             # Forward
             with amp.autocast(enabled=cuda):
+                with torch.no_grad():
+                    pred_t = t_model(imgs)
                  # loss scaled by batch_size
                 pred_s = model(imgs)  # forward
                 loss, loss_items = compute_loss(pred_s, targets.to(device)) 
-                loss = compute_distillation_output_loss(pred_s, pred_t, model, loss)
+                dloss =0 
+                dloss = compute_distillation_output_loss(pred_s, pred_t, model)
+                loss += dloss
+                #loss_items[-1] = loss
+                
+                
+                # loss = compute_distillation_output_loss(pred_s, pred_t, model, loss)
 
 
-                #loss, loss_items = calculate_loss(compute_loss,model_t,targets,device,model,imgs)
+                #loss, loss_items = calculate_loss(compute_loss,t_model,targets,device,model,imgs)
                 
                 if RANK != -1:
                     loss *= WORLD_SIZE  # gradient averaged between devices in DDP mode
@@ -388,9 +380,10 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
             # Log
             if RANK in [-1, 0]:
                 mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
+                mdloss = (mdloss * i + dloss) / (i + 1)
                 mem = f'{torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0:.3g}G'  # (GB)
-                pbar.set_description(('%10s' * 2 + '%10.4g' * 5) % (
-                    f'{epoch}/{epochs - 1}', mem, *mloss, targets.shape[0], imgs.shape[-1]))
+                pbar.set_description(('%10s' * 2 + '%10.4g' * 6) % (
+                    f'{epoch}/{epochs - 1}', mem, *mloss,mdloss, targets.shape[0], imgs.shape[-1]))
                 callbacks.run('on_train_batch_end', ni, model, imgs, targets, paths, plots, opt.sync_bn)
             # end batch ------------------------------------------------------------------------------------------------
 
