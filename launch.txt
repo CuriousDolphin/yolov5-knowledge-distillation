@@ -7,4 +7,12 @@ CUDA_VISIBLE_DEVICES=2,3 python -m torch.distributed.run --nproc_per_node 2 trai
 
 CUDA_VISIBLE_DEVICES=1,2 python -m torch.distributed.run --nproc_per_node 2 train_kd.py --img 640 --batch 144 --epochs 30 --data coco.yaml --weights='yolov5n.pt' --cfg='./models/yolov5n.yaml' --device 1,2 --freeze 10 
 
-CUDA_VISIBLE_DEVICES=2 python train_kd_fi.py --img 640 --batch 80 --epochs 80 --data coco.yaml --weights='yolov5n.pt' --cfg='./models/yolov5n.yaml' --teacher_weight yolov5l.pt
+CUDA_VISIBLE_DEVICES=2 python train_kd_fi.py --img 640 --batch 96 --epochs 80 --data coco.yaml --weights='yolov5n.pt' --cfg='./models/yolov5n.yaml' --teacher_weight yolov5l.pt
+
+CUDA_VISIBLE_DEVICES=1 python train.py --img 640 --batch 80 --epochs 80  --data coco.yaml --cfg='./models/yolov5n.yaml' --weights=''
+
+
+CUDA_VISIBLE_DEVICES=1 python train_kd_fi.py --img 640 --batch 80 --epochs 80 --data coco.yaml --weights='' --cfg='./models/yolov5n.yaml' --teacher_weight yolov5l.pt
+
+
+CUDA_VISIBLE_DEVICES=2 python train_kd.py --img 640 --batch 80 --epochs 80 --data coco.yaml --weights='' --cfg='./models/yolov5n.yaml' --device 1,2 --freeze 10 

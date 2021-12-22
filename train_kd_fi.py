@@ -1,3 +1,5 @@
+#https://github.com/wonbeomjang/yolov5-knowledge-distillation/blob/master/train.py
+
 # YOLOv5 🚀 by Ultralytics, GPL-3.0 license
 """
 Train a YOLOv5 model on a custom dataset
@@ -110,6 +112,8 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
     assert len(names) == nc, f'{len(names)} names found for nc={nc} dataset in {data}'  # check
     is_coco = isinstance(val_path, str) and val_path.endswith('coco/val2017.txt')  # COCO dataset
 
+    torch.backends.cudnn.deterministic = False
+    torch.backends.cudnn.benchmark = True
     # Model
     check_suffix(weights, '.pt')  # check weights
     pretrained = weights.endswith('.pt')
@@ -133,7 +137,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
             teacher_weight = attempt_download(teacher_weight)  # download if not found locally
         teacher_ckpt = torch.load(teacher_weight, map_location=device) 
         teacher_model = Model(cfg or teacher_ckpt['model'].yaml, ch=3, nc=nc, anchors=hyp.get('anchors'),device=device).to(device)  # create
-       
+        teacher_model.float()
         LOGGER.info(f'Load teacher model from {teacher_weight}')  # report
 
     # Freeze

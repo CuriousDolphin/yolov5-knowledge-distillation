@@ -222,7 +222,7 @@ class ComputeLoss:
         return tcls, tbox, indices, anch
 
 
-
+#https://github.com/wonbeomjang/yolov5-knowledge-distillation/
 class ComputeLossImitation:
     # Compute losses
     def __init__(self, model, autobalance=False):

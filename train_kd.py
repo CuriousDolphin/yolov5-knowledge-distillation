@@ -134,8 +134,8 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
 
     # TEACHER MODEL
     with torch_distributed_zero_first(LOCAL_RANK):
-        t_weights = attempt_download("yolov5l.pt")
-    t_model = torch.load("yolov5l.pt", map_location=device)
+        t_weights = attempt_download("yolov5m.pt")
+        t_model = torch.load("yolov5m.pt", map_location=device)
     #t_model = Model(cfg or ckpt['model'].yaml, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
     # exclude = ['anchor'] if (cfg or hyp.get('anchors')) and not resume else []  # exclude keys
     # csd = ckpt['model'].float().state_dict()  # checkpoint state_dict as FP32
